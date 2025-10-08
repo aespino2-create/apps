@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GLTF → STL (Cliente) — Conversor</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#22c55e;--muted:#94a3b8;--glass: rgba(255,255,255,0.03)}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;color:#e6eef6;background:linear-gradient(180deg,#071026 0%, #071933 100%)}
+    .app{max-width:1100px;margin:24px auto;padding:18px;display:grid;grid-template-columns:360px 1fr;gap:18px}
+    .panel{background:var(--card);border-radius:12px;padding:16px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    h1{margin:4px 0 12px;font-size:18px}
+    p.small{margin:0 0 12px;color:var(--muted);font-size:13px}
+    .controls{display:flex;flex-direction:column;gap:10px}
+    label{font-size:13px;color:var(--muted)}
+    input[type=file]{display:block}
+    .row{display:flex;gap:8px}
+    .btn{background:linear-gradient(180deg,#1f2937,#0f1724);border:1px solid rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;color:#e6eef6;cursor:pointer}
+    .btn.primary{background:linear-gradient(180deg,#16a34a,#15803d);border:none}
+    .status{font-size:13px;color:var(--muted)}
+    #viewer{width:100%;height:74vh;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#061124,#071026)}
+    .footer{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
+    .options{display:flex;gap:8px;align-items:center}
+    .range{width:140px}
+    @media (max-width:920px){.app{grid-template-columns:1fr;max-width:940px}#viewer{height:56vh}}
+    .drop{border:2px dashed rgba(255,255,255,0.04);padding:12px;border-radius:8px;text-align:center;color:var(--muted)}
+    a.download{color:#062a14;background:var(--accent);padding:8px 10px;border-radius:8px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel">
+      <h1>Conversor GLTF → STL (cliente)</h1>
+      <p class="small">Arrastra o selecciona un archivo <code>.glb</code> / <code>.gltf</code>. El proceso se realiza totalmente en tu navegador (no se sube nada).</p>
+
+      <div class="controls">
+        <div id="drop" class="drop">Arrastra aquí tu .glb / .gltf o haz clic para seleccionar</div>
+        <input id="fileInput" type="file" accept=".glb,.gltf,.zip,.bin" style="display:none">
+
+        <label>Escala: <span id="scaleLabel">1.00</span></label>
+        <input id="scale" type="range" min="0.1" max="5" step="0.01" value="1" class="range">
+
+        <label>Factor K (centrado automático)</label>
+        <div class="row">
+          <button id="fitBtn" class="btn">Ajustar al centro</button>
+          <button id="normalsBtn" class="btn">Recalcular normales</button>
+        </div>
+
+        <label>Exportar</label>
+        <div class="row">
+          <button id="exportAscii" class="btn primary">Exportar STL (ASCII)</button>
+          <button id="exportBin" class="btn">Exportar STL (Binary)</button>
+        </div>
+
+        <div class="footer">
+          <div class="status" id="status">Esperando archivo…</div>
+          <div id="downloadWrap"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="viewer" class="panel" aria-hidden="false"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.155.0/build/three.module.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.155.0/examples/jsm/loaders/GLTFLoader.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.155.0/examples/jsm/controls/OrbitControls.js';
+    import { STLExporter } from 'https://unpkg.com/three@0.155.0/examples/jsm/exporters/STLExporter.js';
+
+    // UI elements
+    const drop = document.getElementById('drop');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const viewer = document.getElementById('viewer');
+    const scaleInput = document.getElementById('scale');
+    const scaleLabel = document.getElementById('scaleLabel');
+    const exportAscii = document.getElementById('exportAscii');
+    const exportBin = document.getElementById('exportBin');
+    const fitBtn = document.getElementById('fitBtn');
+    const normalsBtn = document.getElementById('normalsBtn');
+    const downloadWrap = document.getElementById('downloadWrap');
+
+    let scene, camera, renderer, controls; 
+    let loaded = null; // root object
+    let exporter = new STLExporter();
+
+    initThree();
+
+    function initThree(){
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(50, viewer.clientWidth / viewer.clientHeight, 0.01, 2000);
+      camera.position.set(0, 1.2, 2.5);
+      renderer = new THREE.WebGLRenderer({antialias:true,alpha:true});
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+      viewer.appendChild(renderer.domElement);
+
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+      dir.position.set(3,10,6);
+      scene.add(dir);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0,0.2,0);
+      controls.update();
+
+      window.addEventListener('resize', onWindowResize);
+      animate();
+    }
+
+    function onWindowResize(){
+      camera.aspect = viewer.clientWidth / viewer.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+    }
+
+    function animate(){
+      requestAnimationFrame(animate);
+      renderer.render(scene,camera);
+    }
+
+    // Drag & drop
+    ['dragenter','dragover'].forEach(ev => {
+      drop.addEventListener(ev, e => {e.preventDefault(); drop.style.borderColor = '#3b82f6'});
+    });
+    ['dragleave','drop'].forEach(ev => {
+      drop.addEventListener(ev, e => {e.preventDefault(); drop.style.borderColor = 'rgba(255,255,255,0.04)'});
+    });
+    drop.addEventListener('click', () => fileInput.click());
+    drop.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+    fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+    function handleFiles(files){
+      if(!files || files.length === 0) return;
+      const f = files[0];
+      status.textContent = `Cargando ${f.name} ...`;
+      loadGLTFFromFile(f).catch(err => {
+        console.error(err); status.textContent = 'Error al cargar. Revisa la consola.';
+      });
+    }
+
+    async function loadGLTFFromFile(file){
+      clearScene();
+      const url = URL.createObjectURL(file);
+      const loader = new GLTFLoader();
+
+      // Try to load as URL (works for .glb and many .gltf if resources embedded)
+      try{
+        const gltf = await new Promise((resolve, reject) => loader.load(url, resolve, xhr => {
+          // progress
+        }, reject));
+        URL.revokeObjectURL(url);
+        loaded = gltf.scene || gltf.scenes[0];
+        scene.add(loaded);
+        postLoad(file.name);
+        return;
+      }catch(err){
+        // fallback: try to read text if .gltf and manual resources unavailable
+      }
+
+      // If failed, try to parse as ArrayBuffer (glb) or text
+      try{
+        const arrayBuffer = await file.arrayBuffer();
+        const gltf2 = await new Promise((resolve,reject)=> loader.parse(arrayBuffer, '', resolve, reject));
+        loaded = gltf2.scene || gltf2.scenes[0];
+        scene.add(loaded);
+        postLoad(file.name);
+        return;
+      }catch(err){
+        console.error('parse failed', err);
+        status.textContent = 'No se ha podido cargar el archivo. Comprueba que sea un .glb o .gltf con recursos embebidos.';
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    function clearScene(){
+      if(loaded){ scene.remove(loaded); disposeNode(loaded); loaded = null; }
+      downloadWrap.innerHTML = '';
+    }
+
+    function disposeNode(node){
+      node.traverse(n => {
+        if(n.geometry) n.geometry.dispose();
+        if(n.material){
+          if(Array.isArray(n.material)) n.material.forEach(m=>m.dispose()); else n.material.dispose();
+        }
+      })
+    }
+
+    function postLoad(fname){
+      status.textContent = `Modelo cargado: ${fname}`;
+      centerAndScale();
+      createDownloadButtons();
+    }
+
+    function centerAndScale(){
+      if(!loaded) return;
+      // compute bounding box
+      const box = new THREE.Box3().setFromObject(loaded);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x,size.y,size.z);
+      const center = box.getCenter(new THREE.Vector3());
+      // recenter
+      loaded.position.x -= center.x;
+      loaded.position.y -= center.y;
+      loaded.position.z -= center.z;
+      // apply scale slider
+      const s = parseFloat(scaleInput.value);
+      loaded.scale.set(s,s,s);
+      scaleLabel.textContent = s.toFixed(2);
+      // fit camera
+      const dist = Math.max(1.2, maxDim * 1.6);
+      camera.position.set(dist, dist * 0.6, dist);
+      controls.target.set(0,0,0); controls.update();
+    }
+
+    scaleInput.addEventListener('input', () => {
+      if(!loaded) return; loaded.scale.set(scaleInput.value,scaleInput.value,scaleInput.value); scaleLabel.textContent = parseFloat(scaleInput.value).toFixed(2);
+    });
+
+    fitBtn.addEventListener('click', () => centerAndScale());
+
+    normalsBtn.addEventListener('click', () => {
+      if(!loaded) return; loaded.traverse(m => { if(m.isMesh){ m.geometry.computeVertexNormals(); }}); status.textContent = 'Normales recalculadas.';
+    });
+
+    function collectExportObject(){
+      if(!loaded) throw new Error('No hay modelo cargado');
+      // clone to avoid modifying original transforms when baking matrices
+      const clone = loaded.clone(true);
+      clone.updateMatrixWorld(true);
+      // ensure geometries are BufferGeometry and apply world transforms
+      const group = new THREE.Group();
+      clone.traverse(node =>{
+        if(node.isMesh){
+          const geom = node.geometry.clone();
+          geom.applyMatrix4(node.matrixWorld);
+          // ensure indexed or non-indexed consistent
+          if(geom.index === null){ geom = THREE.BufferGeometryUtils ? geom : geom; }
+          const mat = new THREE.MeshStandardMaterial();
+          group.add(new THREE.Mesh(geom, mat));
+        }
+      });
+      return group.children.length ? group : clone;
+    }
+
+    function createDownloadButtons(){
+      downloadWrap.innerHTML = '';
+      const name = 'model.stl';
+      const linkAscii = document.createElement('a');
+      linkAscii.textContent = 'Descargar (ASCII)';
+      linkAscii.className = 'download';
+      linkAscii.style.display = 'none';
+      downloadWrap.appendChild(linkAscii);
+
+      exportAscii.onclick = () => {
+        try{
+          const exportObj = collectExportObject();
+          const data = exporter.parse(exportObj, {binary:false});
+          const blob = new Blob([data], {type:'model/stl'});
+          const url = URL.createObjectURL(blob);
+          downloadWrap.innerHTML = `<a class="download" href="${url}" download="${name}">Descargar STL (ASCII)</a>`;
+        }catch(err){console.error(err); status.textContent = 'Error al exportar: ' + err.message}
+      };
+
+      exportBin.onclick = () => {
+        try{
+          const exportObj = collectExportObject();
+          const arraybuffer = exporter.parse(exportObj, {binary:true});
+          const blob = new Blob([arraybuffer], {type:'application/octet-stream'});
+          const url = URL.createObjectURL(blob);
+          downloadWrap.innerHTML = `<a class="download" href="${url}" download="${name}">Descargar STL (Binary)</a>`;
+        }catch(err){console.error(err); status.textContent = 'Error al exportar: ' + err.message}
+      };
+
+    }
+
+  </script>
+  <script>
+    // tiny polyfill for BufferGeometryUtils if not available (merge not essential for export)
+    // Note: three.js examples BufferGeometryUtils can be added later if merging huge meshes required.
+  </script>
+</body>
+</html>
