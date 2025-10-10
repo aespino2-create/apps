@@ -3,238 +3,86 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Visor de Puntuaciones de Fotografías</title>
+  <title>Galería de Fotografías — Visualización</title>
   <style>
-    :root{--gap:12px;--card-bg:#fff;--accent:#1f6feb;--muted:#666}
-    body{font-family:Inter,system-ui,Arial;margin:0;background:#f4f6fb;color:#111}
-    header{display:flex;gap:12px;align-items:center;padding:16px;flex-wrap:wrap}
-    h1{margin:0;font-size:1.1rem}
-    .controls{margin-left:auto;display:flex;gap:8px;align-items:center}
-    .btn{background:var(--accent);color:#fff;padding:8px 12px;border-radius:8px;border:none;cursor:pointer}
-    .btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(31,111,235,.12)}
-    main{padding:16px}
-    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-    .search{padding:8px;border-radius:8px;border:1px solid #ddd}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:var(--gap)}
-    .card{background:var(--card-bg);border-radius:12px;padding:10px;box-shadow:0 6px 18px rgba(14,20,40,.06);display:flex;flex-direction:column;gap:8px}
-    .thumb{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;background:#eee}
-    .name{display:flex;gap:8px;align-items:center}
-    .name input{flex:1;padding:6px;border-radius:8px;border:1px solid #ddd}
-    .score-row{display:flex;gap:8px;align-items:center}
-    .score-row input[type=range]{flex:1}
-    .score-value{min-width:42px;text-align:center}
-    .stats{display:flex;gap:12px;align-items:center}
-    .chart{width:100%;height:80px;background:#fff;border-radius:8px;padding:8px}
-    footer{padding:16px;text-align:center;color:var(--muted);font-size:0.9rem}
-    @media (max-width:420px){header{padding:12px}main{padding:12px}}
+    body{font-family:Inter,system-ui,Arial;margin:0;background:#f4f6fb;color:#111;display:flex;flex-direction:column;min-height:100vh}
+    header{background:#1f6feb;color:#fff;padding:16px;text-align:center}
+    main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+    .menu{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:16px;width:100%;max-width:800px;margin-top:20px}
+    .menu button{background:#fff;border:none;border-radius:12px;padding:20px;box-shadow:0 4px 8px rgba(0,0,0,.1);cursor:pointer;font-size:1rem;transition:.2s}
+    .menu button:hover{background:#1f6feb;color:#fff;transform:scale(1.05)}
+    .viewer{display:none;flex-direction:column;align-items:center;gap:16px;max-width:800px;width:100%}
+    .viewer img{max-width:100%;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.2)}
+    .descripcion{background:#fff;border-radius:12px;padding:12px;box-shadow:0 4px 8px rgba(0,0,0,.1)}
+    .back-btn{align-self:flex-start;background:#1f6feb;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .puntuacion{font-size:1.2rem;color:#1f6feb}
   </style>
 </head>
 <body>
   <header>
-    <h1>Visor de Puntuaciones — Fotografías</h1>
-    <div class="controls">
-      <label class="btn">Subir fotos <input id="imgFiles" type="file" accept="image/*" multiple style="display:none" /></label>
-      <label class="btn ghost">Importar JSON/CSV <input id="dataFile" type="file" accept="application/json,text/csv" style="display:none" /></label>
-      <button id="exportJson" class="btn">Exportar JSON</button>
-      <button id="exportCsv" class="btn ghost">Exportar CSV</button>
-    </div>
+    <h1>Galería de Fotografías</h1>
+    <p>Haz clic en una imagen para verla con su explicación y puntuación</p>
   </header>
 
   <main>
-    <div class="toolbar">
-      <input id="search" class="search" placeholder="Buscar por nombre..." />
-      <select id="sort" class="search">
-        <option value="score_desc">Ordenar: puntuación ⬇</option>
-        <option value="score_asc">Ordenar: puntuación ⬆</option>
-        <option value="name_asc">Ordenar: nombre A→Z</option>
-        <option value="name_desc">Ordenar: nombre Z→A</option>
-      </select>
-      <div class="stats" style="margin-left:auto">
-        <div>Fotos: <span id="count">0</span></div>
-        <div>Media: <span id="avg">—</span></div>
-      </div>
+    <div id="menu" class="menu"></div>
+
+    <div id="viewer" class="viewer">
+      <button class="back-btn" onclick="mostrarMenu()">← Volver al menú</button>
+      <h2 id="nombreFoto"></h2>
+      <img id="imagenFoto" alt="Foto" />
+      <div id="descripcionFoto" class="descripcion"></div>
+      <div id="puntuacionFoto" class="puntuacion"></div>
     </div>
-
-    <div id="grid" class="grid"></div>
-
-    <h3 style="margin-top:18px">Distribución de puntuaciones</h3>
-    <canvas id="hist" class="chart"></canvas>
   </main>
 
-  <footer>Guarda o exporta tus datos. Las imágenes nunca salen del navegador.</footer>
+  <script>
+  let datos = [];
 
-<script>
-// Modelo de datos en memoria: [{id, file (File), url, filename, name, score}]
-const items = [];
-const grid = document.getElementById('grid');
-const imgFiles = document.getElementById('imgFiles');
-const dataFile = document.getElementById('dataFile');
-const search = document.getElementById('search');
-const sortSel = document.getElementById('sort');
-const countEl = document.getElementById('count');
-const avgEl = document.getElementById('avg');
-const histCanvas = document.getElementById('hist');
-const exportJsonBtn = document.getElementById('exportJson');
-const exportCsvBtn = document.getElementById('exportCsv');
-
-function uid(){return Math.random().toString(36).slice(2,9)}
-
-imgFiles.addEventListener('change', e=>{
-  const files = Array.from(e.target.files);
-  files.forEach(f=>{
-    const id = uid();
-    const url = URL.createObjectURL(f);
-    items.push({id,file:f,url,filename:f.name,name:f.name.replace(/\.[^.]+$/,''),score:0});
-  });
-  render();
-  imgFiles.value = '';
-});
-
-// Import JSON or CSV file
-dataFile.addEventListener('change', async e=>{
-  const f = e.target.files[0];
-  if(!f) return;
-  const text = await f.text();
-  if(f.type.includes('json') || f.name.endsWith('.json')){
+  async function cargarDatos(){
     try{
-      const arr = JSON.parse(text);
-      // Expect array of {filename,name,score}
-      arr.forEach(obj=>{
-        // Try to match already loaded file by filename
-        const existing = items.find(it=>it.filename===obj.filename);
-        if(existing){ existing.name = obj.name ?? existing.name; existing.score = Number(obj.score)||0; }
-        else{
-          // create placeholder entry with no File, requires user to upload image file later
-          items.push({id:uid(),file:null,url:null,filename:obj.filename,name:obj.name||obj.filename,score:Number(obj.score)||0});
-        }
-      });
-      render();
-    }catch(err){alert('JSON inválido. Debe ser un array de objetos {filename,name,score}.')}
-  }else{
-    // simple CSV: filename,name,score (header optional)
-    const rows = text.split(/\r?\n/).map(r=>r.trim()).filter(Boolean);
-    const parsed = rows.map(r=>r.split(',').map(c=>c.trim()));
-    parsed.forEach(cols=>{
-      if(cols.length>=1){
-        const filename = cols[0];
-        const name = cols[1]||filename;
-        const score = Number(cols[2]||0);
-        const existing = items.find(it=>it.filename===filename);
-        if(existing){ existing.name = name; existing.score = score; }
-        else items.push({id:uid(),file:null,url:null,filename,name,score});
-      }
-    });
-    render();
-  }
-  dataFile.value='';
-});
-
-function render(){
-  // Apply search + sort
-  const q = search.value.toLowerCase();
-  let show = items.filter(it=> (it.name||'').toLowerCase().includes(q) || (it.filename||'').toLowerCase().includes(q));
-  switch(sortSel.value){
-    case 'score_desc': show.sort((a,b)=>b.score - a.score); break;
-    case 'score_asc': show.sort((a,b)=>a.score - b.score); break;
-    case 'name_asc': show.sort((a,b)=> (a.name||'').localeCompare(b.name||'')); break;
-    case 'name_desc': show.sort((a,b)=> (b.name||'').localeCompare(a.name||'')); break;
-  }
-
-  grid.innerHTML = '';
-  show.forEach(it=>{
-    const div = document.createElement('div'); div.className='card';
-    const img = document.createElement('img'); img.className='thumb';
-    img.alt = it.name || it.filename || '';
-    img.src = it.url || ''; if(!it.url) img.style.background = '#f0f0f0';
-    div.appendChild(img);
-
-    const nameRow = document.createElement('div'); nameRow.className='name';
-    const inp = document.createElement('input'); inp.value = it.name||'';
-    inp.addEventListener('input', e=>{ it.name = e.target.value; updateStats(); });
-    nameRow.appendChild(inp);
-    const fname = document.createElement('div'); fname.style.fontSize='0.75rem'; fname.style.color='var(--muted)'; fname.textContent = it.filename||'';
-    nameRow.appendChild(fname);
-    div.appendChild(nameRow);
-
-    const scoreRow = document.createElement('div'); scoreRow.className='score-row';
-    const range = document.createElement('input'); range.type='range'; range.min=0; range.max=10; range.step=0.1; range.value = it.score;
-    range.addEventListener('input', e=>{ it.score = Number(e.target.value); val.textContent = it.score.toFixed(1); stars.textContent = renderStars(it.score); updateStats(); drawHist(); });
-    scoreRow.appendChild(range);
-    const val = document.createElement('div'); val.className='score-value'; val.textContent = Number(it.score).toFixed(1);
-    scoreRow.appendChild(val);
-    div.appendChild(scoreRow);
-
-    const stars = document.createElement('div'); stars.textContent = renderStars(it.score); stars.style.fontSize='0.9rem'; div.appendChild(stars);
-
-    // Buttons: remove, upload image (if missing)
-    const actions = document.createElement('div'); actions.style.display='flex'; actions.style.gap='8px';
-    const rem = document.createElement('button'); rem.className='btn ghost'; rem.textContent='Eliminar'; rem.addEventListener('click', ()=>{ const idx = items.findIndex(x=>x.id===it.id); if(idx>=0) items.splice(idx,1); render(); });
-    actions.appendChild(rem);
-    if(!it.url){
-      const attach = document.createElement('label'); attach.className='btn'; attach.textContent='Adjuntar imagen';
-      const fileIn = document.createElement('input'); fileIn.type='file'; fileIn.accept='image/*'; fileIn.style.display='none';
-      fileIn.addEventListener('change', e=>{ const f = e.target.files[0]; if(!f) return; it.file=f; it.filename=f.name; it.url = URL.createObjectURL(f); render(); });
-      attach.appendChild(fileIn);
-      actions.appendChild(attach);
+      const resp = await fetch('data.json');
+      datos = await resp.json();
+      crearMenu();
+    }catch(err){
+      document.getElementById('menu').innerHTML = '<p>Error al cargar data.json</p>';
+      console.error(err);
     }
-    div.appendChild(actions);
-
-    grid.appendChild(div);
-  });
-  updateStats();
-  drawHist();
-}
-
-function renderStars(score){
-  const filled = Math.round(score);
-  return '★'.repeat(filled) + '☆'.repeat(10-filled);
-}
-
-function updateStats(){
-  countEl.textContent = items.length;
-  if(items.length===0) avgEl.textContent='—';
-  else{
-    const avg = items.reduce((s,i)=>s + (Number(i.score)||0),0)/items.length;
-    avgEl.textContent = avg.toFixed(2);
   }
-}
 
-// Histogram (bins 0..10)
-function drawHist(){
-  const canvas = histCanvas; const ctx = canvas.getContext('2d');
-  const DPR = window.devicePixelRatio||1; canvas.width = canvas.clientWidth*DPR; canvas.height = canvas.clientHeight*DPR; ctx.scale(DPR,DPR);
-  ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
-  const bins = new Array(11).fill(0);
-  items.forEach(it=>{ const s = Math.round(Number(it.score)||0); bins[Math.max(0,Math.min(10,s))]++; });
-  const max = Math.max(1, ...bins);
-  const w = canvas.clientWidth / bins.length; const h = canvas.clientHeight - 20;
-  bins.forEach((b,i)=>{
-    const x = i*w + 4; const barH = (b/max) * h; const y = canvas.clientHeight - barH - 12;
-    ctx.fillStyle = '#fff'; ctx.fillRect(x,12,w-8,canvas.clientHeight-20);
-    ctx.fillStyle = '#1f6feb'; ctx.fillRect(x,y,w-8,barH);
-    ctx.fillStyle = '#000'; ctx.font='10px sans-serif'; ctx.fillText(String(i), x+4, canvas.clientHeight-2);
-  });
-}
+  function crearMenu(){
+    const menu = document.getElementById('menu');
+    menu.innerHTML = '';
+    datos.forEach((item,i)=>{
+      const btn = document.createElement('button');
+      btn.textContent = item.nombre;
+      btn.onclick = ()=> mostrarFoto(i);
+      menu.appendChild(btn);
+    });
+  }
 
-// Export JSON/CSV using filenames and base64? We'll export filename,name,score and not image bytes (images stay local)
-exportJsonBtn.addEventListener('click', ()=>{
-  const out = items.map(it=>({filename: it.filename||null, name: it.name||null, score: Number(it.score)||0}));
-  const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'puntuaciones.json'; a.click();
-});
-exportCsvBtn.addEventListener('click', ()=>{
-  const rows = [['filename','name','score']];
-  items.forEach(it=> rows.push([`"${it.filename||''}"`,`"${it.name||''}"`, String(Number(it.score)||0)]));
-  const blob = new Blob([rows.map(r=>r.join(',')).join('\n')], {type:'text/csv'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'puntuaciones.csv'; a.click();
-});
+  function mostrarFoto(i){
+    const item = datos[i];
+    document.getElementById('menu').style.display='none';
+    const viewer = document.getElementById('viewer');
+    viewer.style.display='flex';
+    document.getElementById('nombreFoto').textContent = item.nombre;
+    document.getElementById('imagenFoto').src = item.imagen;
+    document.getElementById('descripcionFoto').textContent = item.descripcion;
+    document.getElementById('puntuacionFoto').innerHTML = 'Puntuación: ' + renderEstrellas(item.puntuacion) + ` (${item.puntuacion})`;
+  }
 
-// Wire search and sort
-search.addEventListener('input', render);
-sortSel.addEventListener('change', render);
+  function mostrarMenu(){
+    document.getElementById('viewer').style.display='none';
+    document.getElementById('menu').style.display='grid';
+  }
 
-// initial
-render();
-</script>
+  function renderEstrellas(score){
+    const filled = Math.round(score);
+    return '★'.repeat(filled) + '☆'.repeat(10-filled);
+  }
+
+  cargarDatos();
+  </script>
 </body>
 </html>
